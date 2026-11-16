@@ -1,57 +1,81 @@
-# pedidos-service · NEXUM (A Casa do Tênis)
+# NEXUM · back-end (A Casa do Tênis)
 
-API de pedidos do sistema NEXUM. Spring Boot 4 + JPA. Segue o dicionário de dados:
-tabelas `orders`, `order_items` e `order_status_history`.
+Back-end em **microsserviços** com **Spring Boot 4**, **Kafka**, **Docker** e **MySQL online**.
 
-## Rodar localmente
-
-Não precisa instalar banco: por padrão usa **H2 em memória**, com 5 pedidos de exemplo.
-
-```bash
-./mvnw spring-boot:run
+```
+                         ┌──────────────────────┐
+  Front (React) ───────▶ │ gateway (nginx) :8080│
+                         └──────────┬───────────┘
+          ┌─────────────────────────┼──────────────────────────┐
+          ▼                         ▼                          ▼
+   auth-service              pedidos-service ──Kafka──▶ notificacao-service
+   login JWT, equipe         pedidos, status           mensagens ao cliente
+          │                         │       pedidos.eventos    │
+          ▼                         ▼                          ▼
+     nexum_auth              nexum_pedidos            nexum_notificacoes
+                    (MySQL online: um banco por serviço)
 ```
 
-A API sobe em `http://localhost:8080`. Login da equipe em desenvolvimento:
-usuário `equipe`, senha `nexum-dev` (troque com `NEXUM_STAFF_USER` / `NEXUM_STAFF_PASSWORD`).
+| Serviço | O que faz | Rotas (pelo gateway) |
+|---|---|---|
+| **gateway** (nginx) | Porta única para o front, CORS | `http://localhost:8080` |
+| **auth-service** | Login com JWT; cadastro de funcionários (Administrador, Atendente, Técnico) | `/api/auth/login`, `/api/auth/me`, `/api/staff` |
+| **pedidos-service** | Pedidos, itens e histórico de status; publica eventos no Kafka | `/api/orders`, `/api/orders/{codigo}/tracking` (público) |
+| **notificacao-service** | Consome os eventos do Kafka e registra a mensagem ao cliente | `/api/notifications` |
+| **kafka** | Mensageria entre serviços (tópico `pedidos.eventos`) | interno |
 
-### Com o MySQL (Aiven)
+## Como rodar (só isto)
 
-Copie `.env.example` para `.env`, preencha e rode com o perfil `mysql`.
-O `.env` está no `.gitignore`: **nunca commite senhas**.
+Pré-requisito: **Docker Desktop** instalado e aberto.
 
-## Endpoints
+1. Copie o arquivo de configuração e preencha (banco online, segredo do token e senha do admin):
 
-| Método | Rota | Acesso | O que faz |
-|---|---|---|---|
-| GET | `/api/orders/{code}/tracking` | **Público** | Consulta do cliente: primeiro nome, status, datas, serviços e histórico. Sem preço, telefone ou CEP. |
-| GET | `/api/orders` | Equipe | Lista completa (em andamento primeiro, por prazo), com valores. |
-| GET | `/api/orders/{code}` | Equipe | Detalhe de um pedido. |
-| POST | `/api/orders` | Equipe | Abre ordem de serviço. Gera o código `NX-AAAA-000123`. |
-| PATCH | `/api/orders/{code}/status` | Equipe | Muda o status e grava o histórico. |
+   ```powershell
+   Copy-Item .env.example .env
+   ```
 
-Status: `RECEIVED`, `CLEANING`, `RESTORING`, `READY`, `DELIVERED`, `CANCELED`.
-"Atrasado" e "Prazo próximo" não são status: são calculados pela previsão de entrega.
+2. Suba tudo:
 
-Exemplo de criação:
+   ```bash
+   docker compose up -d --build
+   ```
+
+   Na primeira vez demora alguns minutos (baixa e compila tudo). A API fica em
+   **http://localhost:8080**. Depois é só rodar o front (`npm run dev`).
+
+3. Para parar:
+
+   ```bash
+   docker compose down
+   ```
+
+**Primeiro acesso:** entre no painel com `ADMIN_EMAIL` / `ADMIN_PASSWORD` do `.env`
+e cadastre a equipe na tela **Equipe**.
+
+### Sem banco online?
+
+Dá para usar um MySQL local em Docker. No `.env`, use `DB_HOST=mysql`, `DB_PORT=3306`,
+`DB_USER=root`, `DB_SSL_MODE=DISABLED` e rode:
 
 ```bash
-curl -u equipe:nexum-dev -H "Content-Type: application/json" -X POST localhost:8080/api/orders -d '{
-  "customerName": "Joana Prado", "customerPhone": "(11) 90000-0000", "customerCep": "01310-100",
-  "expectedAt": "2026-12-01",
-  "items": [{ "shoe": "Cano baixo de couro", "service": "Lavagem Premium", "price": 150.00, "detail": "Couro" }]
-}'
+docker compose --profile local-db up -d --build
 ```
 
-Erros seguem o formato Problem Details, com mensagens em português
-(ex.: `400` com `errors.customerCep = "CEP deve ter 8 números"`).
+## Regras principais
 
-## Segurança (etapa atual)
+- Status do pedido: `RECEIVED`, `CLEANING`, `RESTORING`, `READY`, `DELIVERED`, `CANCELED`.
+  "Atrasado" e "Prazo próximo" são calculados pela previsão de entrega, não gravados.
+- Toda mudança de status gera histórico **e** um evento no Kafka (enviado só depois de salvo no banco).
+- Consulta do cliente é pública e mostra só o primeiro nome, sem preço, telefone ou CEP.
+- Pedidos exigem login de qualquer perfil da equipe; cadastro de funcionários só **Administrador**.
+- Senhas guardadas com BCrypt; tokens JWT assinados com `JWT_SECRET` (mesmo valor em todos os serviços).
 
-Login HTTP Basic com um usuário da equipe. Próximo passo: **auth-service com JWT** e perfis
-`ADMIN`, `ATTENDANT` e `TECHNICIAN`, sem mudar as rotas.
+## Desenvolvimento sem Docker
 
-## Testes
+Cada serviço roda sozinho com banco em memória (H2): `cd pedidos-service && ./mvnw spring-boot:run`
+(portas 8081 auth, 8082 pedidos, 8083 notificação). Testes: `./mvnw test` em cada pasta.
 
-```bash
-./mvnw test
-```
+## Segurança
+
+O `.env` está no `.gitignore`. **Nunca commite senhas.** Se uma senha já foi para o Git,
+troque-a no provedor (ex.: painel da Aiven).
