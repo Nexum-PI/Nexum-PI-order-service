@@ -63,17 +63,23 @@ public class SmtpConfirmationMailer implements ConfirmationMailer {
             return;
         }
         try {
-            MimeMessage message = sender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, "UTF-8");
-            helper.setFrom(from, "A Casa do Tênis");
-            helper.setTo(to);
-            helper.setSubject("Confirme seu cadastro · A Casa do Tênis");
-            helper.setText(plain(name, link), html(name, link));
-            sender.send(message);
+            sender.send(buildMessage(sender.createMimeMessage(), to, name, link));
             log.info("E-mail de confirmação enviado para {}", to);
         } catch (Exception e) {
             log.error("Não foi possível enviar o e-mail de confirmação para {}: {}", to, e.getMessage());
         }
+    }
+
+    /** Monta o e-mail (texto + HTML). Separado do envio para poder ser testado sem SMTP. */
+    public MimeMessage buildMessage(MimeMessage message, String to, String name, String link) throws Exception {
+        // multipart: é o que permite mandar o mesmo e-mail em texto e em HTML
+        MimeMessageHelper helper =
+                new MimeMessageHelper(message, MimeMessageHelper.MULTIPART_MODE_MIXED_RELATED, "UTF-8");
+        helper.setFrom(from.isBlank() ? "no-reply@acasadotenis.com.br" : from, "A Casa do Tênis");
+        helper.setTo(to);
+        helper.setSubject("Confirme seu cadastro · A Casa do Tênis");
+        helper.setText(plain(name, link), html(name, link));
+        return message;
     }
 
     private static String first(String name) {
