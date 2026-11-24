@@ -11,6 +11,7 @@ import java.util.List;
 public record CreateOrderRequest(
         @NotBlank(message = "Informe o nome do cliente") @Size(max = 120) String customerName,
         @Size(max = 20) String customerPhone,
+        @Email(message = "E-mail inválido") @Size(max = 160) String customerEmail,
         @NotBlank(message = "Informe o CEP do cliente")
         @Pattern(regexp = "\\d{5}-?\\d{3}", message = "CEP deve ter 8 números") String customerCep,
         @NotNull(message = "Informe a previsão de entrega") LocalDate expectedAt,

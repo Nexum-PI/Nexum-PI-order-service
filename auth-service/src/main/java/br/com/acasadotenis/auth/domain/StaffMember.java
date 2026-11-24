@@ -4,7 +4,10 @@ import jakarta.persistence.*;
 
 import java.time.Instant;
 
-/** Funcionário com acesso ao painel (tabela staff_members). */
+/**
+ * Conta de acesso (tabela staff_members): funcionários e clientes, separados pelo
+ * perfil (role). O nome da tabela vem da primeira versão, só com equipe.
+ */
 @Entity
 @Table(name = "staff_members")
 public class StaffMember {
@@ -27,6 +30,13 @@ public class StaffMember {
     @Column(nullable = false, length = 20)
     private Role role;
 
+    /** Contato e CEP: preenchidos pelo cliente no cadastro (podem ficar vazios para a equipe). */
+    @Column(length = 20)
+    private String phone;
+
+    @Column(length = 9)
+    private String cep;
+
     @Column(nullable = false)
     private boolean active = true;
 
@@ -42,6 +52,10 @@ public class StaffMember {
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
     public Role getRole() { return role; }
     public void setRole(Role role) { this.role = role; }
+    public String getPhone() { return phone; }
+    public void setPhone(String phone) { this.phone = phone; }
+    public String getCep() { return cep; }
+    public void setCep(String cep) { this.cep = cep; }
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
     public Instant getCreatedAt() { return createdAt; }

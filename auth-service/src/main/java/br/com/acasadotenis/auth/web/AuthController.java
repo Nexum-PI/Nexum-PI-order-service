@@ -11,8 +11,11 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * POST /api/auth/login        público: devolve o JWT
- * GET  /api/auth/me           equipe: dados de quem está logado
+ * POST  /api/auth/login        público: devolve o JWT
+ * POST  /api/auth/register     público: cliente cria a própria conta (perfil CLIENT) e já entra
+ * GET   /api/auth/me           logado: dados de quem está logado
+ * PUT   /api/auth/me           logado: edita nome, telefone e CEP
+ * PATCH /api/auth/me/password  logado: troca a senha
  * GET/POST/PUT/PATCH /api/staff  só ADMIN: cadastro de funcionários
  */
 @RestController
@@ -29,9 +32,26 @@ public class AuthController {
         return service.login(request);
     }
 
+    @PostMapping("/api/auth/register")
+    @ResponseStatus(HttpStatus.CREATED)
+    public LoginResponse register(@Valid @RequestBody RegisterRequest request) {
+        return service.register(request);
+    }
+
     @GetMapping("/api/auth/me")
     public StaffView me(@AuthenticationPrincipal Jwt jwt) {
         return service.me(jwt.getSubject());
+    }
+
+    @PutMapping("/api/auth/me")
+    public StaffView updateMe(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody UpdateProfileRequest request) {
+        return service.updateProfile(jwt.getSubject(), request);
+    }
+
+    @PatchMapping("/api/auth/me/password")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void changePassword(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody ChangePasswordRequest request) {
+        service.changePassword(jwt.getSubject(), request);
     }
 
     @GetMapping("/api/staff")

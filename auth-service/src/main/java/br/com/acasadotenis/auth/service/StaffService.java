@@ -1,5 +1,6 @@
 package br.com.acasadotenis.auth.service;
 
+import br.com.acasadotenis.auth.domain.Role;
 import br.com.acasadotenis.auth.domain.StaffMember;
 import br.com.acasadotenis.auth.domain.StaffRepository;
 import br.com.acasadotenis.auth.web.Dtos.*;
@@ -12,6 +13,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
+/** Contas de acesso: login, cadastro de clientes e gestão da equipe. */
 @Service
 public class StaffService {
 
@@ -25,36 +27,75 @@ public class StaffService {
         this.tokens = tokens;
     }
 
+    // ── Login e conta própria ──────────────────────────────────────────────
+
     @Transactional(readOnly = true)
     public LoginResponse login(LoginRequest req) {
         StaffMember m = repository.findByEmailIgnoreCase(req.email().trim())
                 .filter(s -> encoder.matches(req.password(), s.getPasswordHash()))
                 .orElseThrow(() -> new AuthException(HttpStatus.UNAUTHORIZED, "E-mail ou senha incorretos."));
         if (!m.isActive()) {
-            throw new AuthException(HttpStatus.FORBIDDEN, "Acesso desativado. Fale com o administrador.");
+            throw new AuthException(HttpStatus.FORBIDDEN, "Acesso desativado. Fale com a loja.");
         }
-        TokenService.Token t = tokens.issue(m);
-        return new LoginResponse(t.value(), t.expiresAt(), StaffView.from(m));
+        return respond(m);
+    }
+
+    /** Cadastro público: cria sempre uma conta de CLIENTE e já devolve o login. */
+    @Transactional
+    public LoginResponse register(RegisterRequest req) {
+        String email = normalize(req.email());
+        if (repository.existsByEmailIgnoreCase(email)) {
+            throw new AuthException(HttpStatus.CONFLICT, "Já existe uma conta com esse e-mail. Tente entrar.");
+        }
+        StaffMember m = new StaffMember();
+        m.setName(req.name().trim());
+        m.setEmail(email);
+        m.setPhone(req.phone().trim());
+        m.setCep(formatCep(req.cep()));
+        m.setRole(Role.CLIENT);
+        m.setPasswordHash(encoder.encode(req.password()));
+        return respond(repository.save(m));
     }
 
     @Transactional(readOnly = true)
     public StaffView me(String email) {
-        return repository.findByEmailIgnoreCase(email).map(StaffView::from)
-                .orElseThrow(() -> new AuthException(HttpStatus.NOT_FOUND, "Funcionário não encontrado."));
+        return StaffView.from(findByEmail(email));
     }
+
+    @Transactional
+    public StaffView updateProfile(String email, UpdateProfileRequest req) {
+        StaffMember m = findByEmail(email);
+        m.setName(req.name().trim());
+        m.setPhone(req.phone().trim());
+        m.setCep(formatCep(req.cep()));
+        return StaffView.from(m);
+    }
+
+    @Transactional
+    public void changePassword(String email, ChangePasswordRequest req) {
+        StaffMember m = findByEmail(email);
+        if (!encoder.matches(req.currentPassword(), m.getPasswordHash())) {
+            throw new AuthException(HttpStatus.BAD_REQUEST, "A senha atual está incorreta.");
+        }
+        m.setPasswordHash(encoder.encode(req.newPassword()));
+    }
+
+    // ── Equipe (só ADMIN) ──────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<StaffView> list() {
         return repository.findAll().stream()
+                .filter(m -> m.getRole() != Role.CLIENT)
                 .sorted(Comparator.comparing(StaffMember::isActive).reversed().thenComparing(StaffMember::getName))
                 .map(StaffView::from).toList();
     }
 
     @Transactional
     public StaffView create(CreateStaffRequest req) {
+        requireStaffRole(req.role());
         String email = normalize(req.email());
         if (repository.existsByEmailIgnoreCase(email)) {
-            throw new AuthException(HttpStatus.CONFLICT, "Já existe um funcionário com esse e-mail.");
+            throw new AuthException(HttpStatus.CONFLICT, "Já existe uma conta com esse e-mail.");
         }
         StaffMember m = new StaffMember();
         m.setName(req.name().trim());
@@ -66,10 +107,11 @@ public class StaffService {
 
     @Transactional
     public StaffView update(Long id, UpdateStaffRequest req) {
-        StaffMember m = find(id);
+        requireStaffRole(req.role());
+        StaffMember m = findStaff(id);
         String email = normalize(req.email());
         repository.findByEmailIgnoreCase(email).filter(o -> !o.getId().equals(id)).ifPresent(o -> {
-            throw new AuthException(HttpStatus.CONFLICT, "Já existe um funcionário com esse e-mail.");
+            throw new AuthException(HttpStatus.CONFLICT, "Já existe uma conta com esse e-mail.");
         });
         m.setName(req.name().trim());
         m.setEmail(email);
@@ -85,7 +127,7 @@ public class StaffService {
 
     @Transactional
     public StaffView setActive(Long id, boolean active, String currentEmail) {
-        StaffMember m = find(id);
+        StaffMember m = findStaff(id);
         if (!active && m.getEmail().equalsIgnoreCase(currentEmail)) {
             throw new AuthException(HttpStatus.BAD_REQUEST, "Você não pode desativar o próprio acesso.");
         }
@@ -93,12 +135,37 @@ public class StaffService {
         return StaffView.from(m);
     }
 
-    private StaffMember find(Long id) {
+    // ── Apoio ──────────────────────────────────────────────────────────────
+
+    private LoginResponse respond(StaffMember m) {
+        TokenService.Token t = tokens.issue(m);
+        return new LoginResponse(t.value(), t.expiresAt(), StaffView.from(m));
+    }
+
+    /** A gestão de equipe só enxerga e altera funcionários, nunca contas de cliente. */
+    private StaffMember findStaff(Long id) {
         return repository.findById(id)
+                .filter(m -> m.getRole() != Role.CLIENT)
                 .orElseThrow(() -> new AuthException(HttpStatus.NOT_FOUND, "Funcionário não encontrado."));
+    }
+
+    private StaffMember findByEmail(String email) {
+        return repository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new AuthException(HttpStatus.NOT_FOUND, "Conta não encontrada."));
+    }
+
+    private static void requireStaffRole(Role role) {
+        if (role == Role.CLIENT) {
+            throw new AuthException(HttpStatus.BAD_REQUEST, "Clientes criam a própria conta em /cadastro.");
+        }
     }
 
     private static String normalize(String email) {
         return email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String formatCep(String cep) {
+        String digits = cep.replaceAll("\\D", "");
+        return digits.substring(0, 5) + "-" + digits.substring(5);
     }
 }

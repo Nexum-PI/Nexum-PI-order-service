@@ -14,11 +14,12 @@ public record OrderEvent(
         String code,
         String customerName,
         String customerPhone,
+        String customerEmail,
         OrderStatus status,
         String note,
         Instant occurredAt
 ) {
     public static OrderEvent of(String type, Order o, String note, Instant at) {
-        return new OrderEvent(type, o.getCode(), o.getCustomerName(), o.getCustomerPhone(), o.getStatus(), note, at);
+        return new OrderEvent(type, o.getCode(), o.getCustomerName(), o.getCustomerPhone(), o.getCustomerEmail(), o.getStatus(), note, at);
     }
 }

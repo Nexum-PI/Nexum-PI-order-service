@@ -13,6 +13,7 @@ public record OrderResponse(
         String code,
         String customerName,
         String customerPhone,
+        String customerEmail,
         String customerCep,
         OrderStatus status,
         Instant receivedAt,
@@ -29,7 +30,7 @@ public record OrderResponse(
 
     public static OrderResponse from(Order o) {
         return new OrderResponse(
-                o.getCode(), o.getCustomerName(), o.getCustomerPhone(), o.getCustomerCep(),
+                o.getCode(), o.getCustomerName(), o.getCustomerPhone(), o.getCustomerEmail(), o.getCustomerCep(),
                 o.getStatus(), o.getReceivedAt(), o.getExpectedAt(), o.getDeliveredAt(), o.getNotes(),
                 o.getTotal(),
                 o.getItems().stream().map(i -> new Item(i.getShoe(), i.getService(), i.getPrice(), i.getDetail())).toList(),

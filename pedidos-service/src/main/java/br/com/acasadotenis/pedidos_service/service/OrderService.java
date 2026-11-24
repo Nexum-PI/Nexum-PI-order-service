@@ -62,12 +62,38 @@ public class OrderService {
         return TrackingResponse.from(find(code));
     }
 
+    /** "Meus pedidos" do cliente: mais recentes primeiro. Mostra a visão pública (sem preço). */
+    @Transactional(readOnly = true)
+    public List<TrackingResponse> listForAccount(String email) {
+        return repository.findForAccount(email.trim().toLowerCase(Locale.ROOT)).stream()
+                .sorted(Comparator.comparing(Order::getReceivedAt).reversed())
+                .map(TrackingResponse::from)
+                .toList();
+    }
+
+    /**
+     * O cliente adiciona um pedido à própria conta pelo código. Isso só acrescenta o pedido à
+     * lista dele (visão pública, sem preço); o dono do pedido no sistema não muda.
+     */
+    @Transactional
+    public TrackingResponse claim(String email, String code) {
+        Order order = find(code);
+        String mine = email.trim().toLowerCase(Locale.ROOT);
+        if (!mine.equalsIgnoreCase(order.getCustomerEmail())) {
+            order.getFollowers().add(mine);
+        }
+        return TrackingResponse.from(order);
+    }
+
     @Transactional
     public OrderResponse create(CreateOrderRequest req) {
         Instant now = clock.instant();
         Order order = new Order();
         order.setCustomerName(req.customerName().trim());
         order.setCustomerPhone(req.customerPhone());
+        if (req.customerEmail() != null && !req.customerEmail().isBlank()) {
+            order.setCustomerEmail(req.customerEmail().trim().toLowerCase(Locale.ROOT));
+        }
         order.setCustomerCep(formatCep(req.customerCep()));
         order.setExpectedAt(req.expectedAt());
         order.setNotes(req.notes());

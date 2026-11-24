@@ -19,8 +19,8 @@ Back-end em **microsserviços** com **Spring Boot 4**, **Kafka**, **Docker** e *
 | Serviço | O que faz | Rotas (pelo gateway) |
 |---|---|---|
 | **gateway** (nginx) | Porta única para o front, CORS | `http://localhost:8080` |
-| **auth-service** | Login com JWT; cadastro de funcionários (Administrador, Atendente, Técnico) | `/api/auth/login`, `/api/auth/me`, `/api/staff` |
-| **pedidos-service** | Pedidos, itens e histórico de status; publica eventos no Kafka | `/api/orders`, `/api/orders/{codigo}/tracking` (público) |
+| **auth-service** | Login com JWT; cadastro público de clientes (perfil Cliente); cadastro de funcionários (Administrador, Atendente, Técnico) | `/api/auth/login`, `/api/auth/register`, `/api/auth/me`, `/api/auth/me/password`, `/api/staff` |
+| **pedidos-service** | Pedidos, itens e histórico de status; publica eventos no Kafka | `/api/orders` (só equipe), `/api/orders/{codigo}/tracking` (público), `/api/me/orders` (só Cliente: lista e adiciona por código, sem preços) |
 | **notificacao-service** | Consome os eventos do Kafka e registra a mensagem ao cliente | `/api/notifications` |
 | **kafka** | Mensageria entre serviços (tópico `pedidos.eventos`) | interno |
 

@@ -1,6 +1,6 @@
 # Gateway do NEXUM: única porta exposta (8080). O front chama só este endereço.
 #   /api/auth, /api/staff     -> auth-service
-#   /api/orders               -> pedidos-service
+#   /api/orders, /api/me      -> pedidos-service
 #   /api/notifications        -> notificacao-service
 
 # CORS: libera o front local (Vite 5173/4173) e o endereço em FRONT_ORIGIN
@@ -29,12 +29,13 @@ server {
     location /api/auth/          { proxy_pass http://auth; }
     location /api/staff          { proxy_pass http://auth; }
     location /api/orders         { proxy_pass http://pedidos; }
+    location /api/me/            { proxy_pass http://pedidos; }
     location /api/notifications  { proxy_pass http://notificacao; }
 
     location = /health { default_type application/json; return 200 '{"status":"UP"}'; }
     location = / {
         default_type application/json;
-        return 200 '{"servico":"NEXUM API","rotas":["/api/auth/login","/api/orders","/api/orders/{codigo}/tracking","/api/staff","/api/notifications"]}';
+        return 200 '{"servico":"NEXUM API","rotas":["/api/auth/login","/api/orders","/api/orders/{codigo}/tracking","/api/me/orders","/api/staff","/api/notifications"]}';
     }
     location / { return 404; }
 }

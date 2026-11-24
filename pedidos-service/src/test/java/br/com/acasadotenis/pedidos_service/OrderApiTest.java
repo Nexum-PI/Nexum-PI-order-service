@@ -5,6 +5,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.*;
@@ -18,6 +20,14 @@ class OrderApiTest {
 
     @Autowired
     MockMvc mvc;
+
+    private static RequestPostProcessor staff() {
+        return jwt().authorities(new SimpleGrantedAuthority("ROLE_ATTENDANT"));
+    }
+
+    private static RequestPostProcessor client(String email) {
+        return jwt().jwt(j -> j.subject(email)).authorities(new SimpleGrantedAuthority("ROLE_CLIENT"));
+    }
 
     private static final String NEW_ORDER = """
             {"customerName":"Joana Prado Lima","customerPhone":"(11) 90000-0000","customerCep":"01310100",
@@ -57,7 +67,7 @@ class OrderApiTest {
 
     @Test
     void equipeListaComEmAndamentoPrimeiroEComValores() throws Exception {
-        mvc.perform(get("/api/orders").with(jwt()))
+        mvc.perform(get("/api/orders").with(staff()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(greaterThanOrEqualTo(5))))
                 .andExpect(jsonPath("$[0].status", is(in(new String[] {"RECEIVED", "CLEANING", "RESTORING"}))))
@@ -66,7 +76,7 @@ class OrderApiTest {
 
     @Test
     void equipeCriaPedidoComCodigoCepFormatadoEHistorico() throws Exception {
-        mvc.perform(post("/api/orders").with(jwt())
+        mvc.perform(post("/api/orders").with(staff())
                         .contentType(MediaType.APPLICATION_JSON).content(NEW_ORDER))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.code", matchesPattern("NX-\\d{4}-\\d{6}")))
@@ -82,7 +92,7 @@ class OrderApiTest {
                 {"customerName":"","customerCep":"123","expectedAt":"2030-01-10",
                  "items":[{"shoe":"X","service":"Lavagem Premium","price":0}]}
                 """;
-        mvc.perform(post("/api/orders").with(jwt())
+        mvc.perform(post("/api/orders").with(staff())
                         .contentType(MediaType.APPLICATION_JSON).content(invalido))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors.customerName").exists())
@@ -92,7 +102,7 @@ class OrderApiTest {
 
     @Test
     void mudarStatusGravaHistoricoEReflecteNaConsultaDoCliente() throws Exception {
-        mvc.perform(patch("/api/orders/NX-2026-000126/status").with(jwt())
+        mvc.perform(patch("/api/orders/NX-2026-000126/status").with(staff())
                         .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"DELIVERED\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("DELIVERED"))
@@ -101,5 +111,71 @@ class OrderApiTest {
 
         mvc.perform(get("/api/orders/NX-2026-000126/tracking"))
                 .andExpect(jsonPath("$.status").value("DELIVERED"));
+    }
+
+    @Test
+    void clienteNaoAcessaRotasDaEquipe() throws Exception {
+        mvc.perform(get("/api/orders").with(client("ana@email.com"))).andExpect(status().isForbidden());
+        mvc.perform(post("/api/orders").with(client("ana@email.com"))
+                        .contentType(MediaType.APPLICATION_JSON).content(NEW_ORDER))
+                .andExpect(status().isForbidden());
+        mvc.perform(patch("/api/orders/NX-2026-000124/status").with(client("ana@email.com"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"CLEANING\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void equipeNaoUsaAAreaDoCliente() throws Exception {
+        mvc.perform(get("/api/me/orders").with(staff())).andExpect(status().isForbidden());
+        mvc.perform(get("/api/me/orders")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void clienteVeSoOsPedidosDaPropriaContaSemPreco() throws Exception {
+        // Mariana (pedido 000124) e Carlos (000123) têm e-mail nos dados de exemplo.
+        mvc.perform(get("/api/me/orders").with(client("Mariana.Costa@email.com")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].code").value("NX-2026-000124"))
+                .andExpect(jsonPath("$[0].items[0].price").doesNotExist());
+        mvc.perform(get("/api/me/orders").with(client("sem-pedidos@email.com")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void clienteAdicionaPedidoPeloCodigoEPassaAVerNaLista() throws Exception {
+        String conta = "novo.cliente@email.com";
+        mvc.perform(post("/api/me/orders").with(client(conta))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"nx-2026-000125\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("NX-2026-000125"))
+                .andExpect(jsonPath("$.items[0].price").doesNotExist());
+        mvc.perform(get("/api/me/orders").with(client(conta)))
+                .andExpect(jsonPath("$[*].code", hasItem("NX-2026-000125")));
+        // outra conta continua sem ver esse pedido
+        mvc.perform(get("/api/me/orders").with(client("outra.pessoa@email.com")))
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void adicionarCodigoInexistenteDevolve404EVazioDevolve400() throws Exception {
+        mvc.perform(post("/api/me/orders").with(client("a@email.com"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"NX-0000\"}"))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/me/orders").with(client("a@email.com"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void equipeAssociaPedidoAContaPeloEmailDoCliente() throws Exception {
+        String body = NEW_ORDER.replace("\"customerCep\"", "\"customerEmail\":\"Joana@Email.com\",\"customerCep\"");
+        mvc.perform(post("/api/orders").with(staff())
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.customerEmail").value("joana@email.com"));
+        mvc.perform(get("/api/me/orders").with(client("joana@email.com")))
+                .andExpect(jsonPath("$[0].firstName").value("Joana"));
     }
 }

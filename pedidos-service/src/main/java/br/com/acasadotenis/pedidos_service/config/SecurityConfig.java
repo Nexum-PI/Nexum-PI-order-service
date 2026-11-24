@@ -20,7 +20,8 @@ import java.nio.charset.StandardCharsets;
  * Segurança do pedidos-service.
  * - Consulta do cliente (GET /api/orders/{code}/tracking) é pública: o cliente não tem conta.
  * - O resto exige o token (JWT) emitido pelo auth-service, validado com o segredo
- *   compartilhado JWT_SECRET. Qualquer perfil da equipe acessa os pedidos.
+ *   compartilhado JWT_SECRET. Pedidos da loja: só equipe (ADMIN, ATTENDANT, TECHNICIAN).
+ *   "Meus pedidos": só CLIENT, e só os pedidos da própria conta.
  * O CORS é tratado no gateway (nginx).
  */
 @Configuration
@@ -34,7 +35,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/api/orders/*/tracking").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
-                        .requestMatchers("/api/**").authenticated()
+                        // Área do cliente: só CLIENT. Pedidos da loja: só a equipe.
+                        .requestMatchers("/api/me/**").hasRole("CLIENT")
+                        .requestMatchers("/api/orders/**").hasAnyRole("ADMIN", "ATTENDANT", "TECHNICIAN")
                         .anyRequest().denyAll())
                 .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(roleConverter())));
         return http.build();
