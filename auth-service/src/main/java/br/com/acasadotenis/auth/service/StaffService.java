@@ -9,6 +9,17 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -20,11 +31,21 @@ public class StaffService {
     private final StaffRepository repository;
     private final PasswordEncoder encoder;
     private final TokenService tokens;
+    private final ConfirmationMailer mailer;
+    private final String frontUrl;
 
-    public StaffService(StaffRepository repository, PasswordEncoder encoder, TokenService tokens) {
+    private static final SecureRandom RANDOM = new SecureRandom();
+    private static final Duration CONFIRM_TTL = Duration.ofHours(24);
+    private static final Duration RESEND_WAIT = Duration.ofSeconds(60);
+
+    public StaffService(StaffRepository repository, PasswordEncoder encoder, TokenService tokens,
+                        ConfirmationMailer mailer,
+                        @org.springframework.beans.factory.annotation.Value("${nexum.front-url:http://localhost:5173}") String frontUrl) {
         this.repository = repository;
         this.encoder = encoder;
         this.tokens = tokens;
+        this.mailer = mailer;
+        this.frontUrl = frontUrl.replaceAll("/+$", "");
     }
 
     // ── Login e conta própria ──────────────────────────────────────────────
@@ -37,12 +58,19 @@ public class StaffService {
         if (!m.isActive()) {
             throw new AuthException(HttpStatus.FORBIDDEN, "Acesso desativado. Fale com a loja.");
         }
+        if (m.isEmailPending()) {
+            throw new AuthException(HttpStatus.FORBIDDEN,
+                    "Confirme seu e-mail para entrar. Enviamos um link para " + m.getEmail() + ".");
+        }
         return respond(m);
     }
 
-    /** Cadastro público: cria sempre uma conta de CLIENTE e já devolve o login. */
+    /**
+     * Cadastro público: cria uma conta de CLIENTE pendente e envia o link de confirmação por
+     * e-mail. A conta só entra depois de confirmar (o e-mail prova que a pessoa é a dona dele).
+     */
     @Transactional
-    public LoginResponse register(RegisterRequest req) {
+    public RegisterResponse register(RegisterRequest req) {
         String email = normalize(req.email());
         if (repository.existsByEmailIgnoreCase(email)) {
             throw new AuthException(HttpStatus.CONFLICT, "Já existe uma conta com esse e-mail. Tente entrar.");
@@ -54,7 +82,42 @@ public class StaffService {
         m.setCep(formatCep(req.cep()));
         m.setRole(Role.CLIENT);
         m.setPasswordHash(encoder.encode(req.password()));
-        return respond(repository.save(m));
+        m.setEmailPending(true);
+        String link = issueConfirmation(m);
+        repository.save(m);
+        sendAfterCommit(m, link);
+        return new RegisterResponse(email, "Enviamos um link de confirmação para " + email + ".");
+    }
+
+    /** Abre o link do e-mail: ativa a conta e já devolve o login. */
+    @Transactional
+    public LoginResponse confirm(String token) {
+        StaffMember m = repository.findByConfirmTokenHash(hash(token == null ? "" : token.trim()))
+                .orElseThrow(() -> new AuthException(HttpStatus.BAD_REQUEST,
+                        "Link inválido ou já utilizado. Peça um novo e-mail de confirmação."));
+        if (m.getConfirmExpiresAt() == null || m.getConfirmExpiresAt().isBefore(Instant.now())) {
+            throw new AuthException(HttpStatus.BAD_REQUEST,
+                    "Esse link expirou. Peça um novo e-mail de confirmação.");
+        }
+        m.setEmailPending(false);
+        m.setConfirmTokenHash(null);
+        m.setConfirmExpiresAt(null);
+        return respond(m);
+    }
+
+    /**
+     * Reenvia o e-mail de confirmação. Sempre responde igual, exista a conta ou não, para ninguém
+     * descobrir quais e-mails estão cadastrados; e espera 60s entre envios.
+     */
+    @Transactional
+    public void resendConfirmation(String email) {
+        if (email == null || email.isBlank()) return;
+        repository.findByEmailIgnoreCase(email.trim()).filter(StaffMember::isEmailPending).ifPresent(m -> {
+            Instant last = m.getConfirmSentAt();
+            if (last != null && last.plus(RESEND_WAIT).isAfter(Instant.now())) return;
+            String link = issueConfirmation(m);
+            sendAfterCommit(m, link);
+        });
     }
 
     @Transactional(readOnly = true)
@@ -136,6 +199,43 @@ public class StaffService {
     }
 
     // ── Apoio ──────────────────────────────────────────────────────────────
+
+    /** Gera um link novo (guarda só o hash) e devolve o endereço completo para o e-mail. */
+    private String issueConfirmation(StaffMember m) {
+        byte[] bytes = new byte[32];
+        RANDOM.nextBytes(bytes);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        m.setConfirmTokenHash(hash(token));
+        m.setConfirmExpiresAt(Instant.now().plus(CONFIRM_TTL));
+        m.setConfirmSentAt(Instant.now());
+        return frontUrl + "/confirmar-email?token=" + token;
+    }
+
+    /** Só envia depois que a conta foi gravada, para o link nunca apontar para algo que não existe. */
+    private void sendAfterCommit(StaffMember m, String link) {
+        String to = m.getEmail();
+        String name = m.getName();
+        Runnable send = () -> mailer.sendConfirmation(to, name, link);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    send.run();
+                }
+            });
+        } else {
+            send.run();
+        }
+    }
+
+    private static String hash(String token) {
+        try {
+            return HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
 
     private LoginResponse respond(StaffMember m) {
         TokenService.Token t = tokens.issue(m);

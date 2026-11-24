@@ -30,6 +30,13 @@ public final class Dtos {
             @Size(min = 8, max = 72, message = "A senha deve ter entre 8 e 72 caracteres") String password,
             @AssertTrue(message = "É preciso aceitar a política de privacidade") boolean acceptTerms) {}
 
+    /** Resposta do cadastro: a conta fica pendente até o cliente abrir o link do e-mail. */
+    public record RegisterResponse(String email, String message) {}
+
+    public record ConfirmRequest(@NotBlank(message = "Link inválido") String token) {}
+
+    public record ResendRequest(@NotBlank(message = "Informe o e-mail") String email) {}
+
     /** O próprio cliente (ou funcionário) edita nome, telefone e CEP. O e-mail não muda. */
     public record UpdateProfileRequest(
             @NotBlank(message = "Informe o seu nome") @Size(max = 120) String name,

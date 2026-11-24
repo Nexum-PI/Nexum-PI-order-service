@@ -13,10 +13,22 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@org.springframework.context.annotation.Import(RecordingMailer.class)
 class AuthApiTest {
 
     @Autowired
     MockMvc mvc;
+
+    /** Cadastra, abre o link do "e-mail" e devolve o token da conta já confirmada. */
+    private String registerAndConfirm(String body, String email) throws Exception {
+        mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+        String resp = mvc.perform(post("/api/auth/confirm").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + RecordingMailer.tokenFor(email) + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        return resp.replaceAll(".*\"token\":\"([^\"]+)\".*", "$1");
+    }
 
     private String login(String email, String password) throws Exception {
         String body = mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
@@ -69,14 +81,57 @@ class AuthApiTest {
              "cep":"01310100","password":"senha-forte-1","acceptTerms":true}""";
 
     @Test
-    void clienteCriaContaEJaEntraComPerfilClient() throws Exception {
+    void cadastroFicaPendenteAteConfirmarOEmail() throws Exception {
         mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(REGISTER))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.token").doesNotExist())
+                .andExpect(jsonPath("$.email").value("mariana@email.com"));
+        // o e-mail com o link foi "enviado"
+        org.junit.jupiter.api.Assertions.assertNotNull(RecordingMailer.tokenFor("mariana@email.com"));
+
+        // sem confirmar, não entra
+        mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"mariana@email.com\",\"password\":\"senha-forte-1\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.title", containsString("Confirme seu e-mail")));
+
+        // o link confirma, já devolve o login e vale uma vez só
+        String token = RecordingMailer.tokenFor("mariana@email.com");
+        mvc.perform(post("/api/auth/confirm").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + token + "\"}"))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").exists())
                 .andExpect(jsonPath("$.user.role").value("CLIENT"))
-                .andExpect(jsonPath("$.user.email").value("mariana@email.com"))
                 .andExpect(jsonPath("$.user.cep").value("01310-100"));
+        mvc.perform(post("/api/auth/confirm").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"" + token + "\"}"))
+                .andExpect(status().isBadRequest());
         login("mariana@email.com", "senha-forte-1");
+    }
+
+    @Test
+    void linkInventadoEReenvioNaoRevelamContas() throws Exception {
+        mvc.perform(post("/api/auth/confirm").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"token\":\"inventado\"}"))
+                .andExpect(status().isBadRequest());
+        // reenvio responde igual para e-mail que não existe
+        mvc.perform(post("/api/auth/resend-confirmation").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"ninguem@email.com\"}"))
+                .andExpect(status().isNoContent());
+        org.junit.jupiter.api.Assertions.assertNull(RecordingMailer.tokenFor("ninguem@email.com"));
+    }
+
+    @Test
+    void reenvioGeraLinkNovoMasEsperaUmMinutoEntreEnvios() throws Exception {
+        String body = REGISTER.replace("Mariana@Email.com", "reenvio@email.com");
+        mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated());
+        String first = RecordingMailer.tokenFor("reenvio@email.com");
+        // logo depois do cadastro o reenvio é ignorado (anti-spam)
+        mvc.perform(post("/api/auth/resend-confirmation").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"reenvio@email.com\"}"))
+                .andExpect(status().isNoContent());
+        org.junit.jupiter.api.Assertions.assertEquals(first, RecordingMailer.tokenFor("reenvio@email.com"));
     }
 
     @Test
@@ -84,9 +139,9 @@ class AuthApiTest {
         // o corpo pode até trazer "role", mas ele é ignorado: a conta é sempre CLIENT
         String comRole = REGISTER.replace("Mariana@Email.com", "bruno@email.com")
                 .replace("\"acceptTerms\":true", "\"acceptTerms\":true,\"role\":\"ADMIN\"");
-        mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(comRole))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.user.role").value("CLIENT"));
+        String token = registerAndConfirm(comRole, "bruno@email.com");
+        mvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.role").value("CLIENT"));
         mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON).content(comRole))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.title").value("Já existe uma conta com esse e-mail. Tente entrar."));
@@ -106,10 +161,7 @@ class AuthApiTest {
 
     @Test
     void clienteNaoAcessaEquipeEEquipeNaoMostraClientes() throws Exception {
-        String body = mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON)
-                        .content(REGISTER.replace("Mariana@Email.com", "carla@email.com")))
-                .andReturn().getResponse().getContentAsString();
-        String cliente = body.replaceAll(".*\"token\":\"([^\"]+)\".*", "$1");
+        String cliente = registerAndConfirm(REGISTER.replace("Mariana@Email.com", "carla@email.com"), "carla@email.com");
         mvc.perform(get("/api/staff").header("Authorization", "Bearer " + cliente))
                 .andExpect(status().isForbidden());
 
@@ -126,10 +178,7 @@ class AuthApiTest {
 
     @Test
     void clienteEditaOsProprioDadosETrocaASenha() throws Exception {
-        String body = mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON)
-                        .content(REGISTER.replace("Mariana@Email.com", "dora@email.com")))
-                .andReturn().getResponse().getContentAsString();
-        String token = body.replaceAll(".*\"token\":\"([^\"]+)\".*", "$1");
+        String token = registerAndConfirm(REGISTER.replace("Mariana@Email.com", "dora@email.com"), "dora@email.com");
 
         mvc.perform(put("/api/auth/me").header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)

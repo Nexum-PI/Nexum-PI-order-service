@@ -38,6 +38,14 @@ services:
       DB_URL: jdbc:mysql://${DB_HOST}:${DB_PORT}/${DB_PREFIX:-nexum}_auth?sslMode=${DB_SSL_MODE:-REQUIRED}&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      # Link do e-mail de confirmação aponta para o front
+      FRONT_URL: ${FRONT_URL:-http://localhost:5173}
+      # Envio de e-mail (SMTP). Sem MAIL_HOST o link aparece no log do auth-service
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
     restart: on-failure
 
   pedidos-service:

@@ -7,4 +7,5 @@ import java.util.Optional;
 public interface StaffRepository extends JpaRepository<StaffMember, Long> {
     Optional<StaffMember> findByEmailIgnoreCase(String email);
     boolean existsByEmailIgnoreCase(String email);
+    Optional<StaffMember> findByConfirmTokenHash(String confirmTokenHash);
 }

@@ -34,8 +34,19 @@ public class AuthController {
 
     @PostMapping("/api/auth/register")
     @ResponseStatus(HttpStatus.CREATED)
-    public LoginResponse register(@Valid @RequestBody RegisterRequest request) {
+    public RegisterResponse register(@Valid @RequestBody RegisterRequest request) {
         return service.register(request);
+    }
+
+    @PostMapping("/api/auth/confirm")
+    public LoginResponse confirm(@Valid @RequestBody ConfirmRequest request) {
+        return service.confirm(request.token());
+    }
+
+    @PostMapping("/api/auth/resend-confirmation")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void resend(@Valid @RequestBody ResendRequest request) {
+        service.resendConfirmation(request.email());
     }
 
     @GetMapping("/api/auth/me")

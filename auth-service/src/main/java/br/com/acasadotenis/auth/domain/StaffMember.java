@@ -40,6 +40,23 @@ public class StaffMember {
     @Column(nullable = false)
     private boolean active = true;
 
+    /**
+     * Cadastro de cliente ainda sem o e-mail confirmado. Fica "falso" por padrão para que contas
+     * antigas e as criadas pelo administrador continuem entrando normalmente.
+     */
+    @Column(name = "email_pending", nullable = false, columnDefinition = "boolean default false")
+    private boolean emailPending = false;
+
+    /** Hash (SHA-256) do link de confirmação; o texto do link nunca é guardado. */
+    @Column(name = "confirm_token_hash", length = 64)
+    private String confirmTokenHash;
+
+    @Column(name = "confirm_expires_at")
+    private Instant confirmExpiresAt;
+
+    @Column(name = "confirm_sent_at")
+    private Instant confirmSentAt;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
 
@@ -58,5 +75,13 @@ public class StaffMember {
     public void setCep(String cep) { this.cep = cep; }
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
+    public boolean isEmailPending() { return emailPending; }
+    public void setEmailPending(boolean emailPending) { this.emailPending = emailPending; }
+    public String getConfirmTokenHash() { return confirmTokenHash; }
+    public void setConfirmTokenHash(String confirmTokenHash) { this.confirmTokenHash = confirmTokenHash; }
+    public Instant getConfirmExpiresAt() { return confirmExpiresAt; }
+    public void setConfirmExpiresAt(Instant confirmExpiresAt) { this.confirmExpiresAt = confirmExpiresAt; }
+    public Instant getConfirmSentAt() { return confirmSentAt; }
+    public void setConfirmSentAt(Instant confirmSentAt) { this.confirmSentAt = confirmSentAt; }
     public Instant getCreatedAt() { return createdAt; }
 }
