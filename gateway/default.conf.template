@@ -11,13 +11,18 @@ map $http_origin $cors_origin {
     "${FRONT_ORIGIN}" $http_origin;
 }
 
-upstream auth        { server auth-service:8080; }
-upstream pedidos     { server pedidos-service:8080; }
-upstream notificacao { server notificacao-service:8080; }
-
 server {
     listen 80;
     client_max_body_size 2m;
+
+    # DNS interno do Docker. Os destinos ficam em variáveis para o nginx voltar a
+    # resolver o nome a cada 10s: quando um serviço reinicia (ex.: esperando o MySQL)
+    # ele ganha outro IP, e com "upstream" fixo o gateway continuaria no IP antigo,
+    # mandando as chamadas para o serviço errado (401/403 "acesso não permitido").
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $auth        http://auth-service:8080;
+    set $pedidos     http://pedidos-service:8080;
+    set $notificacao http://notificacao-service:8080;
 
     add_header Access-Control-Allow-Origin $cors_origin always;
     add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" always;
@@ -26,11 +31,11 @@ server {
 
     if ($request_method = OPTIONS) { return 204; }
 
-    location /api/auth/          { proxy_pass http://auth; }
-    location /api/staff          { proxy_pass http://auth; }
-    location /api/orders         { proxy_pass http://pedidos; }
-    location /api/me/            { proxy_pass http://pedidos; }
-    location /api/notifications  { proxy_pass http://notificacao; }
+    location /api/auth/          { proxy_pass $auth; }
+    location /api/staff          { proxy_pass $auth; }
+    location /api/orders         { proxy_pass $pedidos; }
+    location /api/me/            { proxy_pass $pedidos; }
+    location /api/notifications  { proxy_pass $notificacao; }
 
     location = /health { default_type application/json; return 200 '{"status":"UP"}'; }
     location = / {
